@@ -26,9 +26,11 @@
 ## Shot 5: Signed Decision
 
 - Enter a short note
+- Show whether `Approve` is enabled or blocked
 - Pick one action
 - Sign the message
 - Wait for the saved review card to appear
+- Hold on the signature verification state
 
 ## Shot 6: Persistence
 
@@ -39,4 +41,5 @@
 ## Shot 7: Closing Frame
 
 - End on provider notes and the right rail
+- Keep the creator follow-up packet visible
 - Close with the point that this is a live Bags creator launch review workflow

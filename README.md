@@ -10,6 +10,7 @@ The current build combines:
 - DexScreener plus GeckoTerminal market coverage
 - Real local snapshot history
 - A wallet-connected decision console that signs review outcomes
+- A persisted launch review packet for each signed decision
 
 ## What This Version Is
 
@@ -33,7 +34,7 @@ The current build combines:
 4. Connect Phantom or Solflare.
 5. Add a short reviewer note.
 6. Sign and submit `Approve`, `Hold`, or `Escalate`.
-7. Persist the signed decision into the local review ledger.
+7. Persist the signed decision and launch review packet into the local review ledger.
 
 ## Main Architecture
 
@@ -41,6 +42,7 @@ The current build combines:
 - `server/` contains the local API, provider aggregation, history snapshots, and review persistence.
 - `server/state/live-history.json` stores real snapshot history.
 - `server/state/reviews.json` stores signed local review decisions.
+- Review reads refresh from disk so saved decisions can be verified after restart.
 
 ## Current Live Data Reality
 
@@ -56,7 +58,8 @@ The current build combines:
 - Some live candidates still have partial holder coverage.
 - Quote probes are still weaker than full execution analytics.
 - Snapshot history is real, but it is locally accumulated over time rather than backfilled from an external historical data source.
-- Wallet signing is real, but review submission is stored locally and not verified onchain.
+- Wallet signing is real, and review submission now includes local server-side signature verification.
+- Review packets are local workflow artifacts, not onchain governance records.
 
 ## Run Locally
 

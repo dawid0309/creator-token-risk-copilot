@@ -14,6 +14,8 @@ function sampleToken(
     | "reviewStatus"
     | "isCurated"
     | "reviewPriority"
+    | "approvalEligible"
+    | "approvalBlockers"
   > & { mintAddress?: string },
 ): Token {
   return {
@@ -36,6 +38,8 @@ function sampleToken(
     reviewStatus: "unreviewed",
     isCurated: false,
     reviewPriority: 0,
+    approvalEligible: false,
+    approvalBlockers: ["Sample fallback is not approval evidence"],
     sourceLabel: "Sample fallback",
   };
 }

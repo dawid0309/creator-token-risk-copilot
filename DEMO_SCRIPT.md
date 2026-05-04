@@ -21,17 +21,22 @@ Show that Creator Token Risk Copilot is a live Bags API creator launch review wo
    - supplemental quote probes
 5. Connect Phantom or Solflare.
 6. Type a short reviewer note.
-7. Submit one signed action:
-   - `Approve`
+7. Call out the approval gate:
+   - weak-evidence candidates can be reviewed
+   - `Approve` only unlocks for approval-ready evidence
+8. Submit one signed action:
+   - `Approve` for an approval-ready live token
    - or `Hold`
    - or `Escalate`
-8. Show the saved review state and wallet signature snippet.
-9. Refresh or switch away and back to prove persistence.
-10. Close by showing provider health and explaining that curated candidates stabilize the demo path.
+9. Show the saved review state, signature verification, and wallet signature snippet.
+10. Show the creator follow-up packet and recommended next action.
+11. Refresh or switch away and back to prove persistence.
+12. Close by showing provider health and explaining that curated candidates stabilize the demo path.
 
 ## Talking Points
 
-- “This is no longer sample-only.”
-- “The homepage is now a review queue, not a raw hybrid dashboard.”
-- “The action is real wallet signing, but intentionally local and low-complexity.”
-- “Coverage gaps stay visible so the score remains honest.”
+- "This is no longer sample-only."
+- "The homepage is now a review queue, not a raw hybrid dashboard."
+- "The action is real wallet signing with local server verification, but intentionally not onchain."
+- "Approve is stricter than review; weak evidence can be held or escalated, not waved through."
+- "Coverage gaps stay visible so the score remains honest."

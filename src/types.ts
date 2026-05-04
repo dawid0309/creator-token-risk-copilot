@@ -61,6 +61,8 @@ export type Token = {
   reviewStatus: ReviewStatus;
   isCurated: boolean;
   reviewPriority: number;
+  approvalEligible: boolean;
+  approvalBlockers: string[];
   sourceLabel?: string;
 };
 
@@ -172,6 +174,53 @@ export type ReviewDecisionSignals = {
   level: RiskLevel;
 };
 
+export type LaunchReviewPacket = {
+  createdAt: string;
+  mintAddress: string;
+  creatorProfile: {
+    creator: string;
+    mintAddress: string;
+    bagsSignalSummary: string;
+  };
+  evidenceSnapshot: {
+    marketSignal: {
+      priceUsd: number;
+      liquidityUsd: number;
+      volume24hUsd: number;
+      priceChange24hPercent: number;
+    };
+    holderSignal: {
+      holders: number;
+      topHolderPercent: number;
+      coverage: CoverageState;
+    };
+    historySignal: {
+      historySource: Token["historySource"];
+      historyPointCount: number;
+      coverage: CoverageState;
+    };
+    feeSignal: {
+      feeVelocityUsd: number;
+      feeSpikeMultiple: number;
+      coverage: CoverageState;
+    };
+    score: number;
+    level: RiskLevel;
+    confidenceLevel: ConfidenceLevel;
+  };
+  decisionState: {
+    decision: ReviewDecision;
+    approvalEligible: boolean;
+    approvalBlockers: string[];
+  };
+  followUpAction:
+    | "creator_outreach"
+    | "watch_for_more_history"
+    | "manual_fee_review"
+    | "escalation_review";
+  followUpChecklist: string[];
+};
+
 export type ReviewRecord = {
   mintAddress: string;
   decision: ReviewDecision;
@@ -180,7 +229,12 @@ export type ReviewRecord = {
   reviewedByWallet: string;
   walletSignature: string;
   signedMessage: string;
+  signatureVerified: boolean;
+  verifiedAt: string | null;
   reviewedAt: string;
+  approvalEligible: boolean;
+  approvalBlockers: string[];
+  launchReviewPacket: LaunchReviewPacket;
   decisionSignals: ReviewDecisionSignals;
 };
 
@@ -195,6 +249,7 @@ export type ReviewSubmitPayload = {
 export type ReviewListResponse = {
   items: ReviewRecord[];
   updatedAt: string;
+  storeStatus: ReviewStoreStatus;
 };
 
 export type ReviewDetailResponse = {
@@ -203,6 +258,21 @@ export type ReviewDetailResponse = {
 
 export type ReviewSubmitResponse = {
   review: ReviewRecord;
+  storeStatus: ReviewStoreStatus;
+};
+
+export type ReviewRejectResponse = {
+  message: string;
+  approvalBlockers?: string[];
+};
+
+export type ReviewStoreStatus = {
+  storagePath: string;
+  reviewCount: number;
+  fileExists: boolean;
+  diskSynced: boolean;
+  lastPersistedAt: string | null;
+  lastReloadedAt: string | null;
 };
 
 export type RawSolanaTokenSnapshot = {
@@ -292,5 +362,7 @@ export type NormalizedTokenMetrics = {
   reviewStatus: ReviewStatus;
   isCurated: boolean;
   reviewPriority: number;
+  approvalEligible: boolean;
+  approvalBlockers: string[];
   sourceLabel?: string;
 };

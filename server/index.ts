@@ -1,10 +1,24 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import nacl from "tweetnacl";
+import { PublicKey } from "@solana/web3.js";
 import { env } from "./env.ts";
 import { getHealth, getTokenDetail, getTokenFeed } from "./providers.ts";
 import { analyzeToken } from "../src/lib/risk-engine.ts";
-import { getReview, listReviews, upsertReview } from "./review-store.ts";
+import {
+  getApprovalBlockers,
+  getFollowUpAction,
+  getFollowUpChecklist,
+  isApprovalEligible,
+} from "../src/lib/review-policy.ts";
+import {
+  getReview,
+  getReviewStoreStatus,
+  refreshReviewsFromDisk,
+  upsertReview,
+} from "./review-store.ts";
 import type {
   FeedMode,
+  LaunchReviewPacket,
   ReviewDecision,
   ReviewRecord,
   ReviewSubmitPayload,
@@ -60,6 +74,90 @@ function validateReviewPayload(payload: ReviewSubmitPayload) {
   return null;
 }
 
+function decodeBase64(value: string) {
+  return Uint8Array.from(Buffer.from(value, "base64"));
+}
+
+function encodeMessage(message: string) {
+  return new TextEncoder().encode(message);
+}
+
+function verifyWalletSignature(input: {
+  walletAddress: string;
+  signedMessage: string;
+  walletSignature: string;
+}) {
+  try {
+    const publicKey = new PublicKey(input.walletAddress);
+    const messageBytes = encodeMessage(input.signedMessage);
+    const signatureBytes = decodeBase64(input.walletSignature);
+    return nacl.sign.detached.verify(messageBytes, signatureBytes, publicKey.toBytes());
+  } catch {
+    return false;
+  }
+}
+
+function buildLaunchReviewPacket(
+  detail: Awaited<ReturnType<typeof getTokenDetail>>,
+  review: Pick<
+    ReviewRecord,
+    "mintAddress" | "decisionSignals" | "decision" | "approvalEligible" | "approvalBlockers"
+  >,
+): LaunchReviewPacket {
+  if (!detail) {
+    throw new Error("Token detail is required to build a launch review packet.");
+  }
+  const token = detail.token;
+  const followUpAction = getFollowUpAction(review.decision, review.approvalBlockers);
+  return {
+    createdAt: new Date().toISOString(),
+    mintAddress: token.mintAddress,
+    creatorProfile: {
+      creator: token.creator,
+      mintAddress: token.mintAddress,
+      bagsSignalSummary:
+        token.coverageSummary.bags === "verified"
+          ? "Bags creator and fee signals are connected."
+          : token.coverageSummary.bags === "partial"
+            ? "Bags signals are partial and still need review."
+            : "Bags creator signals are still thin.",
+    },
+    evidenceSnapshot: {
+      marketSignal: {
+        priceUsd: token.marketPriceUsd,
+        liquidityUsd: token.marketLiquidityUsd,
+        volume24hUsd: token.marketVolume24hUsd,
+        priceChange24hPercent: token.marketPriceChange24hPercent,
+      },
+      holderSignal: {
+        holders: token.holders,
+        topHolderPercent: token.topHolderPercent,
+        coverage: token.coverageSummary.chain,
+      },
+      historySignal: {
+        historySource: token.historySource,
+        historyPointCount: token.historyPointCount,
+        coverage: token.coverageSummary.history,
+      },
+      feeSignal: {
+        feeVelocityUsd: token.feeVelocityUsd,
+        feeSpikeMultiple: token.feeSpikeMultiple,
+        coverage: token.coverageSummary.bags,
+      },
+      score: review.decisionSignals.score,
+      level: review.decisionSignals.level,
+      confidenceLevel: token.confidenceLevel,
+    },
+    decisionState: {
+      decision: review.decision,
+      approvalEligible: review.approvalEligible,
+      approvalBlockers: review.approvalBlockers,
+    },
+    followUpAction,
+    followUpChecklist: getFollowUpChecklist(review.decision, review.approvalBlockers),
+  };
+}
+
 const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || `localhost:${env.port}`}`);
 
@@ -106,9 +204,11 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
     }
 
     if (url.pathname === "/api/reviews" && request.method === "GET") {
+      const items = await refreshReviewsFromDisk();
       json(response, 200, {
-        items: await listReviews(),
+        items,
         updatedAt: new Date().toISOString(),
+        storeStatus: getReviewStoreStatus(),
       });
       return;
     }
@@ -147,6 +247,26 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         return;
       }
 
+      const signatureVerified = verifyWalletSignature({
+        walletAddress: payload.reviewedByWallet.trim(),
+        signedMessage: payload.signedMessage.trim(),
+        walletSignature: payload.walletSignature.trim(),
+      });
+      if (!signatureVerified) {
+        json(response, 400, { message: "Wallet signature verification failed." });
+        return;
+      }
+
+      const approvalBlockers = getApprovalBlockers(detail.token);
+      const approvalEligible = isApprovalEligible(detail.token);
+      if (payload.decision === "Approve" && !approvalEligible) {
+        json(response, 400, {
+          message: "Approve blocked by insufficient evidence.",
+          approvalBlockers,
+        });
+        return;
+      }
+
       const report = analyzeToken(detail.token);
       const review: ReviewRecord = {
         mintAddress,
@@ -156,7 +276,53 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         reviewedByWallet: payload.reviewedByWallet.trim(),
         walletSignature: payload.walletSignature.trim(),
         signedMessage: payload.signedMessage.trim(),
+        signatureVerified: true,
+        verifiedAt: new Date().toISOString(),
         reviewedAt: new Date().toISOString(),
+        approvalEligible,
+        approvalBlockers,
+        launchReviewPacket: {
+          createdAt: "",
+          mintAddress,
+          creatorProfile: {
+            creator: "",
+            mintAddress,
+            bagsSignalSummary: "",
+          },
+          evidenceSnapshot: {
+            marketSignal: {
+              priceUsd: 0,
+              liquidityUsd: 0,
+              volume24hUsd: 0,
+              priceChange24hPercent: 0,
+            },
+            holderSignal: {
+              holders: 0,
+              topHolderPercent: 0,
+              coverage: detail.token.coverageSummary.chain,
+            },
+            historySignal: {
+              historySource: detail.token.historySource,
+              historyPointCount: detail.token.historyPointCount,
+              coverage: detail.token.coverageSummary.history,
+            },
+            feeSignal: {
+              feeVelocityUsd: 0,
+              feeSpikeMultiple: 0,
+              coverage: detail.token.coverageSummary.bags,
+            },
+            score: report.score,
+            level: report.level,
+            confidenceLevel: detail.token.confidenceLevel,
+          },
+          decisionState: {
+            decision: payload.decision,
+            approvalEligible,
+            approvalBlockers,
+          },
+          followUpAction: "watch_for_more_history",
+          followUpChecklist: [],
+        },
         decisionSignals: {
           marketCoverage: detail.token.coverageSummary.market,
           holderCoverage: detail.token.coverageSummary.chain,
@@ -167,8 +333,10 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         },
       };
 
+      review.launchReviewPacket = buildLaunchReviewPacket(detail, review);
+
       await upsertReview(review);
-      json(response, 200, { review });
+      json(response, 200, { review, storeStatus: getReviewStoreStatus() });
       return;
     }
 

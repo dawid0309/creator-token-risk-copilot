@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { analyzeToken } from "../src/lib/risk-engine";
+import { getApprovalBlockers, isApprovalEligible } from "../src/lib/review-policy";
 import type { Token } from "../src/types";
 
 function makeToken(overrides: Partial<Token> = {}): Token {
@@ -46,6 +47,8 @@ function makeToken(overrides: Partial<Token> = {}): Token {
     reviewStatus: "unreviewed",
     isCurated: false,
     reviewPriority: 180,
+    approvalEligible: false,
+    approvalBlockers: ["Needs real history"],
     sourceLabel: "Bags + market stats",
     ...overrides,
   };
@@ -133,10 +136,98 @@ describe("hybrid live token behavior", () => {
       reviewStatus: "approved",
       isCurated: true,
       reviewPriority: 640,
+      approvalEligible: true,
+      approvalBlockers: [],
     });
 
     expect(token.reviewStatus).toBe("approved");
     expect(token.isCurated).toBe(true);
     expect(token.reviewPriority).toBeGreaterThan(0);
+  });
+
+  it("blocks approve for sample fallback tokens", () => {
+    const token = makeToken({
+      isLive: false,
+      sourceTags: ["sample"],
+      historySource: "sample-static",
+      approvalEligible: false,
+      approvalBlockers: ["Sample fallback is not approval evidence"],
+    });
+
+    expect(isApprovalEligible(token)).toBe(false);
+    expect(getApprovalBlockers(token)).toContain("Sample fallback is not approval evidence");
+  });
+
+  it("allows approve only when verified market, chain, and history are all present", () => {
+    const token = makeToken({
+      holders: 2480,
+      topHolderPercent: 29,
+      confidenceLevel: "high",
+      coverageSummary: {
+        chain: "verified",
+        bags: "verified",
+        market: "verified",
+        history: "verified",
+        eligibleSignals: ["holders", "market", "momentum", "launch", "history"],
+        flags: [],
+      },
+      missingSignals: [],
+      historySource: "real-snapshots",
+      historyPointCount: 4,
+      approvalEligible: true,
+      approvalBlockers: [],
+    });
+
+    expect(isApprovalEligible(token)).toBe(true);
+    expect(getApprovalBlockers(token)).toEqual([]);
+  });
+
+  it("allows review queue candidates that have usable market coverage even while history is still collecting", () => {
+    const token = makeToken({
+      holders: 320,
+      topHolderPercent: 24,
+      confidenceLevel: "medium",
+      coverageSummary: {
+        chain: "verified",
+        bags: "partial",
+        market: "verified",
+        history: "missing",
+        eligibleSignals: ["holders", "market", "launch"],
+        flags: ["history-collecting"],
+      },
+      missingSignals: ["fees"],
+      historySource: "collecting",
+      historyPointCount: 1,
+    });
+    const report = analyzeToken(token);
+
+    expect(report.action).not.toBe("Needs More Data");
+    expect(token.coverageSummary.market).toBe("verified");
+  });
+
+  it("keeps launch review packet-compatible tokens structurally valid", () => {
+    const token = makeToken({
+      creator: "bags-creator",
+      feeVelocityUsd: 4200,
+      feeSpikeMultiple: 2.4,
+      historySource: "real-snapshots",
+      historyPointCount: 5,
+      coverageSummary: {
+        chain: "verified",
+        bags: "verified",
+        market: "verified",
+        history: "verified",
+        eligibleSignals: ["holders", "market", "momentum", "launch", "history"],
+        flags: [],
+      },
+      confidenceLevel: "high",
+      holders: 2480,
+      topHolderPercent: 29,
+    });
+    const report = analyzeToken(token);
+
+    expect(report.score).toBeGreaterThan(0);
+    expect(token.coverageSummary.history).toBe("verified");
+    expect(token.creator).toBe("bags-creator");
   });
 });

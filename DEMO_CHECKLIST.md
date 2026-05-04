@@ -7,6 +7,7 @@
 - confirm `/api/health` loads
 - confirm the homepage lands on the review queue
 - confirm at least one live candidate is visible
+- confirm at least one candidate shows approval blockers or approval-ready state correctly
 - unlock Phantom or Solflare
 
 ## During Demo
@@ -20,11 +21,14 @@
 - connect wallet
 - enter reviewer note
 - sign and submit decision
+- show signature verified state
 - show persisted state
+- show creator follow-up packet
 
 ## Safety Checks
 
 - keep one fallback candidate available in case the top candidate changes
 - avoid describing quote probes as full market stats
-- avoid calling the rule engine “AI reasoning”
+- avoid calling the rule engine "AI reasoning"
 - mention that signatures are locally persisted, not written onchain
+- mention that sample fallback is not approval evidence

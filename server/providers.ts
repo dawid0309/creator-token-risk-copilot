@@ -17,6 +17,7 @@ import type {
   TokenFeedResponse,
 } from "../src/types.ts";
 import { analyzeToken } from "../src/lib/risk-engine.ts";
+import { getApprovalBlockers, isApprovalEligible } from "../src/lib/review-policy.ts";
 import { env } from "./env.ts";
 import { appendLiveSnapshots, readTokenHistory } from "./history-store.ts";
 import { getReview } from "./review-store.ts";
@@ -470,6 +471,8 @@ function normalizeToken(metrics: NormalizedTokenMetrics): Token {
     reviewStatus: metrics.reviewStatus,
     isCurated: metrics.isCurated,
     reviewPriority: metrics.reviewPriority,
+    approvalEligible: metrics.approvalEligible,
+    approvalBlockers: metrics.approvalBlockers,
     sourceLabel: metrics.sourceLabel,
   };
 }
@@ -1204,6 +1207,8 @@ async function buildWatchlistToken(mintAddress: string): Promise<WatchlistTokenR
         reviewStatus: "unreviewed",
         isCurated: isCuratedMint(mintAddress),
         reviewPriority: 0,
+        approvalEligible: false,
+        approvalBlockers: [],
         sourceLabel: market ? "Live Solana + market stats" : "Live Solana chain data",
       }),
     };
@@ -1330,6 +1335,8 @@ async function enrichDiscoveryToken(bags: RawBagsTokenSnapshot): Promise<Token |
     reviewStatus: "unreviewed",
     isCurated: isCuratedMint(bags.mintAddress),
     reviewPriority: 0,
+    approvalEligible: false,
+    approvalBlockers: [],
     sourceLabel: "Bags + market stats",
   });
 }
@@ -1494,6 +1501,16 @@ function hasUsableMarketCoverage(token: Token) {
   );
 }
 
+function isReviewEligible(token: Token) {
+  return (
+    hasUsableMarketCoverage(token) &&
+    token.coverageSummary.chain !== "missing" &&
+    (token.coverageSummary.bags === "verified" || token.coverageSummary.market !== "missing") &&
+    token.confidenceLevel !== "low" &&
+    !(token.holders <= 0 && token.topHolderPercent <= 0)
+  );
+}
+
 function isCuratedMint(mintAddress: string) {
   return curatedReviewMints.includes(mintAddress);
 }
@@ -1518,7 +1535,12 @@ function computeReviewPriority(token: Token) {
       : token.coverageSummary.chain === "partial"
         ? 70
         : 0;
-  const historyRank = token.historySource === "real-snapshots" ? 40 : 0;
+  const historyRank =
+    token.historySource === "real-snapshots"
+      ? token.historyPointCount >= 3
+        ? 90
+        : 35
+      : 0;
   const curatedRank = token.isCurated ? 55 : 0;
   const confidenceRank =
     token.confidenceLevel === "high" ? 45 : token.confidenceLevel === "medium" ? 25 : 5;
@@ -1561,6 +1583,8 @@ async function attachReviewMetadata(token: Token, options?: { curated?: boolean 
 
   return {
     ...enriched,
+    approvalEligible: isApprovalEligible(enriched),
+    approvalBlockers: getApprovalBlockers(enriched),
     reviewPriority: computeReviewPriority(enriched),
   };
 }
@@ -1737,12 +1761,14 @@ export async function getTokenFeed(options: {
   const watchlistMarketHits = reviewedWatchlist.filter((item) => item.sourceTags.includes("market")).length;
   const marketCoveredWatchlist = reviewedWatchlist.filter((item) => hasUsableMarketCoverage(item));
   const marketCoveredDiscovery = reviewedDiscovery.filter((item) => hasUsableMarketCoverage(item));
+  const eligibleWatchlist = marketCoveredWatchlist.filter(isReviewEligible);
+  const eligibleDiscovery = marketCoveredDiscovery.filter(isReviewEligible);
   const hiddenWatchlistCount = watchlistResult.data.length - marketCoveredWatchlist.length;
   const hiddenDiscoveryCount = reviewedDiscovery.length - marketCoveredDiscovery.length;
-  const hybridItems = mergeHybridTokens(marketCoveredWatchlist, marketCoveredDiscovery);
+  const hybridItems = mergeHybridTokens(eligibleWatchlist, eligibleDiscovery);
   const reviewQueue = buildReviewQueue(
-    marketCoveredWatchlist.filter((token) => token.isCurated),
-    marketCoveredDiscovery,
+    eligibleWatchlist.filter((token) => token.isCurated),
+    eligibleDiscovery,
     requestedLimit,
   );
 
@@ -1782,10 +1808,10 @@ export async function getTokenFeed(options: {
   let queueLabel: string | undefined;
 
   if (mode === "watchlist") {
-    items = marketCoveredWatchlist;
+    items = eligibleWatchlist;
     sourceKind = items.length > 0 ? "live-solana" : "static-sample";
   } else if (mode === "discovery") {
-    items = marketCoveredDiscovery;
+    items = eligibleDiscovery;
     sourceKind = items.length > 0 ? "live-bags" : "static-sample";
   } else if (mode === "review") {
     items = reviewQueue.items;
@@ -1801,11 +1827,11 @@ export async function getTokenFeed(options: {
   } else {
     items = hybridItems;
     sourceKind =
-      marketCoveredDiscovery.length > 0 && marketCoveredWatchlist.length > 0
+      eligibleDiscovery.length > 0 && eligibleWatchlist.length > 0
         ? "hybrid"
-        : marketCoveredWatchlist.length > 0
+        : eligibleWatchlist.length > 0
           ? "live-solana"
-          : marketCoveredDiscovery.length > 0
+          : eligibleDiscovery.length > 0
             ? "live-bags"
             : "static-sample";
   }

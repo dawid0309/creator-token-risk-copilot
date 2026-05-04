@@ -32,5 +32,6 @@ describe("token provider", () => {
       riskLevel: "High Risk",
     });
     expect(result.sourceKind).toBe("hybrid");
+    expect(result.queueLabel).toBe("Curated Review Queue");
   });
 });

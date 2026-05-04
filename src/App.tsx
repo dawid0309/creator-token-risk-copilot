@@ -15,8 +15,14 @@ import {
   Star,
   Wallet,
 } from "lucide-react";
-import { type CSSProperties, useDeferredValue, useEffect, useState } from "react";
-import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Suspense,
+  lazy,
+  type CSSProperties,
+  useDeferredValue,
+  useEffect,
+  useState,
+} from "react";
 import { formatCurrency, formatNumber, formatPercent } from "./lib/format";
 import { loadHealth, loadReviews, submitReview } from "./lib/api";
 import { analyzeToken } from "./lib/risk-engine";
@@ -28,10 +34,15 @@ import type {
   ProviderStatus,
   ReviewDecision,
   ReviewRecord,
+  ReviewStoreStatus,
   RiskLevel,
   Token,
   TokenFeed,
 } from "./types";
+
+const HistoryChart = lazy(() =>
+  import("./components/history-chart").then((module) => ({ default: module.HistoryChart })),
+);
 
 const watchlistKey = "ctrc-watchlist";
 const riskFilters: Array<RiskLevel | "All levels"> = [
@@ -132,11 +143,16 @@ function encodeBase64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+function isReviewPersisted(review: ReviewRecord | null) {
+  return Boolean(review?.launchReviewPacket?.createdAt);
+}
+
 export default function App() {
   const wallet = useWallet();
   const [feed, setFeed] = useState<TokenFeed | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [reviews, setReviews] = useState<Record<string, ReviewRecord>>({});
+  const [reviewStoreStatus, setReviewStoreStatus] = useState<ReviewStoreStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [feedError, setFeedError] = useState("");
   const [selectedId, setSelectedId] = useState("");
@@ -158,6 +174,7 @@ export default function App() {
   const selectedReview = selected ? reviews[selected.mintAddress] ?? null : null;
   const walletAddress = wallet.publicKey?.toBase58() ?? "";
   const canSign = Boolean(wallet.connected && wallet.signMessage && walletAddress);
+  const approveBlocked = selectedDecision === "Approve" && !selected.approvalEligible;
 
   useEffect(() => {
     let cancelled = false;
@@ -183,6 +200,7 @@ export default function App() {
           setReviews(
             Object.fromEntries(nextReviews.items.map((review) => [review.mintAddress, review])),
           );
+          setReviewStoreStatus(nextReviews.storeStatus);
           setSelectedId((current) => current || nextFeed.items[0]?.id || "");
           return;
         } catch {
@@ -252,10 +270,15 @@ export default function App() {
     ]);
     setFeed(nextFeed);
     setReviews(Object.fromEntries(nextReviews.items.map((review) => [review.mintAddress, review])));
+    setReviewStoreStatus(nextReviews.storeStatus);
   }
 
   async function handleSubmitDecision() {
     if (!selected || !report) return;
+    if (selectedDecision === "Approve" && !selected.approvalEligible) {
+      setSubmitError(selected.approvalBlockers[0] || "Approve is blocked until evidence is stronger.");
+      return;
+    }
     if (!canSign || !wallet.signMessage) {
       setSubmitError("Connect Phantom or Solflare to sign the review decision.");
       return;
@@ -289,6 +312,19 @@ export default function App() {
         ...current,
         [result.review.mintAddress]: result.review,
       }));
+      setReviewStoreStatus(result.storeStatus);
+      setFeed((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((token) =>
+                token.id === selected.id
+                  ? { ...token, reviewStatus: decisionToStatus(result.review.decision) }
+                  : token,
+              ),
+            }
+          : current,
+      );
       await refreshFeedAndReviews();
       setLastSubmitted(`${selectedDecision} submitted for ${selected.symbol}`);
     } catch (error) {
@@ -456,7 +492,7 @@ export default function App() {
                         >
                           {statusLabel(token.reviewStatus)}
                         </span>
-                        {token.isCurated ? <span>Curated</span> : <span>Discovery</span>}
+                        <span>{token.isCurated ? "Curated" : "Discovery"}</span>
                         <span
                           className={`rounded-full border px-2 py-0.5 ${confidenceBadgeClass(token.confidenceLevel)}`}
                         >
@@ -464,7 +500,9 @@ export default function App() {
                         </span>
                       </span>
                     </span>
-                    <span className={`risk-pill ${levelClass(tokenReport.level)}`}>{tokenReport.score}</span>
+                    <span className={`risk-pill ${levelClass(tokenReport.level)}`}>
+                      {tokenReport.score}
+                    </span>
                   </button>
                 );
               })}
@@ -523,7 +561,9 @@ export default function App() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={`risk-pill ${levelClass(report.level)}`}>{report.level}</span>
-                    <span className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase ${reviewStatusClass(selected.reviewStatus)}`}>
+                    <span
+                      className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase ${reviewStatusClass(selected.reviewStatus)}`}
+                    >
                       {statusLabel(selected.reviewStatus)}
                     </span>
                     <span className="rounded-full border border-slate-200 px-3 py-1 text-xs font-bold text-slate-500">
@@ -549,6 +589,11 @@ export default function App() {
                     </span>
                     <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-black uppercase text-slate-600">
                       {selected.sourceLabel ?? readyFeed.sourceLabel}
+                    </span>
+                    <span
+                      className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase ${selected.approvalEligible ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}
+                    >
+                      {selected.approvalEligible ? "Approval ready" : "Approval blocked"}
                     </span>
                   </div>
 
@@ -612,7 +657,7 @@ export default function App() {
                   <CoverageRow label="Live history" state={selected.coverageSummary.history} />
                 </div>
                 <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
-                  Coverage不足时，分数仅用于初筛。Quote probes 继续保留，但不会单独支撑强审阅结论。
+                  Coverage不足时，分数仅用于初筛。Quote probes 会继续保留，但不会单独支撑强审阅结论。
                 </div>
               </div>
             </div>
@@ -628,32 +673,21 @@ export default function App() {
                     <p className="mt-3 text-xs leading-5 text-slate-500">
                       Historical risk is recalculated from stored live snapshots.
                     </p>
-                    <div className="chart-shell mt-4">
-                      <AreaChart data={selected.history} height={260} width={760}>
-                        <defs>
-                          <linearGradient id="riskFill" x1="0" x2="0" y1="0" y2="1">
-                            <stop offset="5%" stopColor="#059669" stopOpacity={0.28} />
-                            <stop offset="95%" stopColor="#059669" stopOpacity={0.02} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
-                        <XAxis dataKey="day" tickLine={false} axisLine={false} />
-                        <YAxis tickLine={false} axisLine={false} width={34} />
-                        <Tooltip />
-                        <Area
-                          type="monotone"
-                          dataKey="risk"
-                          stroke="#059669"
-                          strokeWidth={3}
-                          fill="url(#riskFill)"
-                        />
-                      </AreaChart>
-                    </div>
+                    <Suspense
+                      fallback={
+                        <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
+                          Loading live history chart...
+                        </div>
+                      }
+                    >
+                      <HistoryChart history={selected.history} />
+                    </Suspense>
                   </>
                 ) : (
                   <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-                    Collecting live history. This token currently has {selected.historyPointCount} real snapshot
-                    {selected.historyPointCount === 1 ? "" : "s"}, so the chart stays hidden until at least 3 points are available.
+                    Collecting live history. This token currently has {selected.historyPointCount} real
+                    snapshot{selected.historyPointCount === 1 ? "" : "s"}, so the chart stays hidden until
+                    at least 3 points are available.
                   </div>
                 )}
               </div>
@@ -666,11 +700,19 @@ export default function App() {
                 <div className="mt-4 grid grid-cols-2 gap-3">
                   <Metric
                     label="Market liquidity"
-                    value={selected.marketLiquidityUsd > 0 ? formatCurrency(selected.marketLiquidityUsd) : "Unavailable"}
+                    value={
+                      selected.marketLiquidityUsd > 0
+                        ? formatCurrency(selected.marketLiquidityUsd)
+                        : "Unavailable"
+                    }
                   />
                   <Metric
                     label="24h volume"
-                    value={selected.marketVolume24hUsd > 0 ? formatCurrency(selected.marketVolume24hUsd) : "Unavailable"}
+                    value={
+                      selected.marketVolume24hUsd > 0
+                        ? formatCurrency(selected.marketVolume24hUsd)
+                        : "Unavailable"
+                    }
                   />
                   <Metric
                     label="Solana holders"
@@ -701,7 +743,11 @@ export default function App() {
                   />
                   <Metric
                     label="Quote impact probe"
-                    value={selected.quoteImpactPercent !== 0 ? formatPercent(selected.quoteImpactPercent) : "Unavailable"}
+                    value={
+                      selected.quoteImpactPercent !== 0
+                        ? formatPercent(selected.quoteImpactPercent)
+                        : "Unavailable"
+                    }
                   />
                 </div>
               </div>
@@ -715,7 +761,8 @@ export default function App() {
                 Decision Console
               </h2>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                Connect a reviewer wallet, leave a short note, then sign the decision message to move this token into an auditable review state.
+                Connect a reviewer wallet, leave a short note, then sign the decision message to move
+                this token into an auditable review state.
               </p>
 
               <div className="mt-4 flex flex-wrap gap-2">
@@ -723,12 +770,28 @@ export default function App() {
                   <button
                     className={`decision-chip ${selectedDecision === decision ? "decision-chip-active" : ""}`}
                     key={decision}
+                    disabled={decision === "Approve" && !selected.approvalEligible}
                     onClick={() => setSelectedDecision(decision)}
                   >
                     {decision}
                   </button>
                 ))}
               </div>
+
+              {!selected.approvalEligible ? (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                  <div className="font-black uppercase">Approve blocked</div>
+                  <div className="mt-2">
+                    {selected.approvalBlockers.length > 0
+                      ? selected.approvalBlockers.join(" · ")
+                      : "This token still needs stronger evidence before approval."}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5 text-emerald-900">
+                  Approval-ready evidence is available for this live token.
+                </div>
+              )}
 
               <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                 <p className="font-black text-slate-900">Reviewer wallet</p>
@@ -769,7 +832,7 @@ export default function App() {
               <button
                 className="primary-button mt-3 w-full justify-center"
                 onClick={() => void handleSubmitDecision()}
-                disabled={submitting}
+                disabled={submitting || approveBlocked}
               >
                 <FileSignature className="h-4 w-4" />
                 {submitting ? "Signing decision..." : `Sign and submit ${selectedDecision}`}
@@ -790,7 +853,9 @@ export default function App() {
               {selectedReview ? (
                 <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
                   <div className="flex items-center justify-between gap-2">
-                    <span className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase ${reviewStatusClass(decisionToStatus(selectedReview.decision))}`}>
+                    <span
+                      className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase ${reviewStatusClass(decisionToStatus(selectedReview.decision))}`}
+                    >
                       {selectedReview.decision}
                     </span>
                     <span className="text-[11px] font-black uppercase text-slate-500">
@@ -801,6 +866,45 @@ export default function App() {
                   <div className="mt-3 grid gap-2 text-xs text-slate-500">
                     <span>Wallet: {selectedReview.reviewedByWallet}</span>
                     <span>Signature saved: {selectedReview.walletSignature.slice(0, 24)}...</span>
+                    <span>Signature verified: {selectedReview.signatureVerified ? "yes" : "no"}</span>
+                    <span>Packet saved: {isReviewPersisted(selectedReview) ? "yes" : "no"}</span>
+                    <span>
+                      Disk synced: {reviewStoreStatus?.diskSynced ? "yes" : "pending"}
+                      {reviewStoreStatus?.lastPersistedAt
+                        ? ` · ${new Date(reviewStoreStatus.lastPersistedAt).toLocaleString()}`
+                        : ""}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] leading-5 text-slate-600">
+                    <span>
+                      Evidence state:{" "}
+                      {selectedReview.approvalEligible ? "Approval-ready evidence" : "Partial evidence review"}
+                    </span>
+                    <span>Follow-up action: {selectedReview.launchReviewPacket.followUpAction}</span>
+                    <span>Creator: {selectedReview.launchReviewPacket.creatorProfile.creator}</span>
+                    <span>
+                      Market:{" "}
+                      {selectedReview.launchReviewPacket.evidenceSnapshot.marketSignal.liquidityUsd > 0
+                        ? formatCurrency(selectedReview.launchReviewPacket.evidenceSnapshot.marketSignal.liquidityUsd)
+                        : "Thin"}
+                      {" / "}
+                      {selectedReview.launchReviewPacket.evidenceSnapshot.marketSignal.volume24hUsd > 0
+                        ? formatCurrency(selectedReview.launchReviewPacket.evidenceSnapshot.marketSignal.volume24hUsd)
+                        : "No volume"}
+                    </span>
+                    <span>
+                      History: {selectedReview.launchReviewPacket.evidenceSnapshot.historySignal.historySource} ·{" "}
+                      {selectedReview.launchReviewPacket.evidenceSnapshot.historySignal.historyPointCount} points
+                    </span>
+                    <span>
+                      Blockers:{" "}
+                      {selectedReview.approvalBlockers.length > 0
+                        ? selectedReview.approvalBlockers.join(" · ")
+                        : "none"}
+                    </span>
+                    <span>
+                      Checklist: {selectedReview.launchReviewPacket.followUpChecklist.join(" · ")}
+                    </span>
                   </div>
                 </div>
               ) : (
@@ -820,10 +924,30 @@ export default function App() {
                 <Metric label="Source type" value={readyFeed.sourceLabel} />
                 <Metric label="Current state" value={statusLabel(selected.reviewStatus)} />
                 <Metric label="Confidence" value={selected.confidenceLevel} />
+                <Metric label="Approval" value={selected.approvalEligible ? "Ready" : "Blocked"} />
+                <Metric
+                  label="Review ledger"
+                  value={
+                    reviewStoreStatus
+                      ? `${reviewStoreStatus.reviewCount} saved${reviewStoreStatus.diskSynced ? " · disk synced" : ""}`
+                      : "Loading"
+                  }
+                />
               </div>
               <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
                 {readyFeed.description}
               </div>
+              {reviewStoreStatus ? (
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs leading-5 text-slate-600">
+                  <div>Storage path: {reviewStoreStatus.storagePath}</div>
+                  <div>
+                    Last disk reload:{" "}
+                    {reviewStoreStatus.lastReloadedAt
+                      ? new Date(reviewStoreStatus.lastReloadedAt).toLocaleString()
+                      : "Not yet"}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="panel">
@@ -838,17 +962,15 @@ export default function App() {
             <div className="panel">
               <h2 className="section-title">Quick actions</h2>
               <div className="mt-4 space-y-3">
-                <button
-                  className="icon-link-row"
-                  onClick={() => toggleWatchlist(selected.id)}
-                >
+                <button className="icon-link-row" onClick={() => toggleWatchlist(selected.id)}>
                   <span className="flex items-center gap-2">
                     <Star className={`h-4 w-4 ${isWatched ? "fill-amber-400 text-amber-500" : ""}`} />
                     {isWatched ? "Watching this candidate" : "Add to watchlist"}
                   </span>
                 </button>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-                  Curated candidates keep the homepage stable. Discovery items still surface when they have enough live market coverage to support review.
+                  Curated candidates keep the homepage stable. Discovery items still surface when they
+                  have enough live market coverage to support review.
                 </div>
               </div>
             </div>

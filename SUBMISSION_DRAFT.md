@@ -27,6 +27,7 @@ This MVP combines live provider data with a real review workflow:
 - Real snapshot history
 - Wallet-connected signed review decision
 - Persistent local review ledger
+- Launch review packet with follow-up action
 
 ## Track Fit
 
@@ -48,7 +49,9 @@ This is a live local MVP, not a final production system.
 - Market enrichment is real through DexScreener and GeckoTerminal.
 - The review flow uses real wallet connection and real message signing.
 - Review records are stored locally and not written onchain.
+- Each saved review now includes a locally verified creator follow-up packet for the next workflow step.
 - The scoring engine is deterministic and rule-based, not model-generated.
+- `Approve` is only available when the token passes a stricter approval-evidence gate.
 
 ## Core Demo Flow
 
@@ -65,6 +68,7 @@ This is a live local MVP, not a final production system.
 - It starts from a launch review queue, not a broad token list.
 - It separates evidence from action.
 - It attaches a reviewer wallet identity to each final decision.
+- It prevents weak-evidence candidates from being approved.
 - It is designed around Bags creator-token candidates first.
 
 ## Tech Stack
@@ -82,7 +86,8 @@ This is a live local MVP, not a final production system.
 ## Current Limitations
 
 - Some live candidates still have partial holder or market coverage.
-- Review signatures are persisted locally and not server-verified against the chain.
+- Review signatures are verified locally on the server before they are persisted, but they are not written onchain.
+- Sample fallback items can demonstrate workflow, but they are not approval-ready evidence.
 - The workflow stops at signed review action and does not yet execute deeper onchain creator operations.
 
 ## Why Judges Should Trust It

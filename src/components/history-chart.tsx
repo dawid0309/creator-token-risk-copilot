@@ -16,7 +16,7 @@ export function HistoryChart({ history }: { history: TokenHistoryPoint[] }) {
         <YAxis tickLine={false} axisLine={false} width={34} />
         <Tooltip />
         <Area
-          type="monotone"
+          type={history.length < 3 ? "linear" : "monotone"}
           dataKey="risk"
           stroke="#059669"
           strokeWidth={3}

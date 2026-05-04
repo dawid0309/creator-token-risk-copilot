@@ -28,9 +28,10 @@ The homepage is no longer a generic hybrid dashboard.
 The default entry point is now:
 
 - `mode=review`
-- curated live creator-token queue first
+- live creator-token candidates first when provider coverage is usable
 - discovery-backed supplements second
-- sample fallback only when no live review items are usable
+- no automatic sample fallback on the default review path
+- sample remains available only through an explicit internal demo mode
 
 ## Workflow States
 
@@ -106,6 +107,7 @@ Review reads must reload from disk so persisted decisions can be verified after 
 New token mode:
 
 - `GET /api/tokens?mode=review`
+- `GET /api/tokens?mode=review&demo=sample`
 
 Approval-readiness metadata returned on tokens:
 
@@ -168,6 +170,7 @@ Approval eligibility is stricter than review eligibility.
 - Snapshot history must be described as locally collected
 - Wallet signing must be described as local review authorization, not as an onchain action
 - Sample fallback must not be described as approval evidence
+- Sample data must not appear on the default review path
 - Follow-up packets must be described as local workflow artifacts
 
 ## Out Of Scope For This Round
@@ -181,7 +184,7 @@ Approval eligibility is stricter than review eligibility.
 
 ## Success Criteria
 
-- Default homepage lands on a stable review queue
+- Default homepage lands on a live-only review queue
 - Review decisions can be signed with Phantom or Solflare
 - Review signatures are verified locally by the server before persistence
 - Weak-evidence candidates can still be reviewed but cannot be approved

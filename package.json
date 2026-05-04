@@ -10,7 +10,9 @@
     "build": "tsc && tsc -p server/tsconfig.json && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "demo:preflight": "node scripts/demo-preflight.mjs",
+    "demo:check": "npm run test && npm run build && npm run demo:preflight"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

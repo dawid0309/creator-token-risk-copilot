@@ -1,5 +1,4 @@
 import { useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -26,6 +25,7 @@ import {
 import { formatCurrency, formatNumber, formatPercent } from "./lib/format";
 import { loadHealth, loadReviews, submitReview } from "./lib/api";
 import { analyzeToken } from "./lib/risk-engine";
+import { buildReviewSignatureMessage } from "./lib/review-signing";
 import { loadTokenFeed } from "./lib/token-provider";
 import { readStoredList, writeStoredList } from "./lib/storage";
 import type {
@@ -42,6 +42,11 @@ import type {
 
 const HistoryChart = lazy(() =>
   import("./components/history-chart").then((module) => ({ default: module.HistoryChart })),
+);
+const WalletConnectButton = lazy(() =>
+  import("./components/wallet-connect-button").then((module) => ({
+    default: module.WalletConnectButton,
+  })),
 );
 
 const watchlistKey = "ctrc-watchlist";
@@ -114,23 +119,6 @@ function decisionToStatus(decision: ReviewDecision): Token["reviewStatus"] {
   return "escalated";
 }
 
-function createSignedMessage(input: {
-  mintAddress: string;
-  decision: ReviewDecision;
-  score: number;
-  note: string;
-}) {
-  return [
-    "Creator Token Risk Copilot",
-    "Action: creator launch review",
-    `Mint: ${input.mintAddress}`,
-    `Decision: ${input.decision}`,
-    `Score: ${input.score}`,
-    `Timestamp: ${new Date().toISOString()}`,
-    `Note: ${input.note.trim()}`,
-  ].join("\n");
-}
-
 function encodeMessage(message: string) {
   return new TextEncoder().encode(message);
 }
@@ -174,7 +162,8 @@ export default function App() {
   const selectedReview = selected ? reviews[selected.mintAddress] ?? null : null;
   const walletAddress = wallet.publicKey?.toBase58() ?? "";
   const canSign = Boolean(wallet.connected && wallet.signMessage && walletAddress);
-  const approveBlocked = selectedDecision === "Approve" && !selected.approvalEligible;
+  const approveBlocked = selectedDecision === "Approve" && Boolean(selected) && !selected.approvalEligible;
+  const queueModeLabel = readyFeed?.demoMode === "sample" ? "Internal demo sample" : "Live review queue";
 
   useEffect(() => {
     let cancelled = false;
@@ -191,7 +180,11 @@ export default function App() {
               riskLevel: riskFilter,
             }),
             loadHealth(),
-            loadReviews(),
+            loadReviews().catch(() => ({
+              items: [],
+              updatedAt: new Date().toISOString(),
+              storeStatus: null,
+            })),
           ]);
           if (cancelled) return;
 
@@ -200,13 +193,15 @@ export default function App() {
           setReviews(
             Object.fromEntries(nextReviews.items.map((review) => [review.mintAddress, review])),
           );
-          setReviewStoreStatus(nextReviews.storeStatus);
+          setReviewStoreStatus(nextReviews.storeStatus ?? null);
           setSelectedId((current) => current || nextFeed.items[0]?.id || "");
           return;
         } catch {
           if (attempt === 2) {
             if (!cancelled) {
-              setFeedError("Live review providers are still warming up. Please try again in a moment.");
+              setFeedError(
+                "Live review data could not be loaded. Check that the local API is running and that the frontend is pointed at the correct review server.",
+              );
             }
           } else {
             await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
@@ -266,11 +261,15 @@ export default function App() {
         query: deferredQuery,
         riskLevel: riskFilter,
       }),
-      loadReviews(),
+      loadReviews().catch(() => ({
+        items: [],
+        updatedAt: new Date().toISOString(),
+        storeStatus: null,
+      })),
     ]);
     setFeed(nextFeed);
     setReviews(Object.fromEntries(nextReviews.items.map((review) => [review.mintAddress, review])));
-    setReviewStoreStatus(nextReviews.storeStatus);
+    setReviewStoreStatus(nextReviews.storeStatus ?? null);
   }
 
   async function handleSubmitDecision() {
@@ -292,11 +291,13 @@ export default function App() {
       setSubmitting(true);
       setSubmitError("");
 
-      const signedMessage = createSignedMessage({
+      const signedAt = new Date().toISOString();
+      const signedMessage = buildReviewSignatureMessage({
         mintAddress: selected.mintAddress,
         decision: selectedDecision,
-        score: report.score,
-        note: reviewNote,
+        reviewNotes: reviewNote,
+        reviewedByWallet: walletAddress,
+        timestamp: signedAt,
       });
       const signature = await wallet.signMessage(encodeMessage(signedMessage));
 
@@ -306,6 +307,7 @@ export default function App() {
         reviewedByWallet: walletAddress,
         walletSignature: encodeBase64(signature),
         signedMessage,
+        signedAt,
       });
 
       setReviews((current) => ({
@@ -376,10 +378,14 @@ export default function App() {
         <div className="mx-auto flex min-h-screen w-full max-w-[1560px] items-center justify-center px-4 py-6">
           <div className="panel w-full max-w-2xl">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
-              No matching review items
+              No live review candidates
             </p>
             <h1 className="mt-3 text-3xl font-black">Creator Launch Review Console</h1>
             <p className="mt-3 text-sm leading-6 text-slate-600">{readyFeed.description}</p>
+            <div className="mt-4 rounded-xl border border-dashed border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+              Live review mode is still online, but there are no review-eligible live candidates to
+              show right now. This is a live evidence gap, not a product failure.
+            </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {(health?.providerStatus ?? readyFeed.providerStatus).map((status) => (
                 <ProviderStateRow key={status.id} status={status} />
@@ -402,7 +408,7 @@ export default function App() {
               <ShieldCheck className="h-4 w-4" />
               Live Bags creator launch review workflow
               <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-500">
-                {readyFeed.queueLabel ?? "Review Queue"}
+                {queueModeLabel}
               </span>
               <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-500">
                 {readyFeed.sourceLabel}
@@ -412,9 +418,9 @@ export default function App() {
               Creator Launch Review Console
             </h1>
             <p className="max-w-3xl text-sm leading-6 text-slate-600">
-              A wallet-connected Bags creator-token review workflow. The queue favors curated live
-              candidates first, then adds discovery-backed supplements, so the demo path stays stable
-              while each final decision is signed by the reviewer wallet.
+              A wallet-connected Bags creator-token review workflow. The default queue is live-only:
+              curated candidates come first, discovery only supplements when evidence is strong enough,
+              and weak data stays out of the main review path.
             </p>
           </div>
 
@@ -428,7 +434,9 @@ export default function App() {
               <span className="header-stat-value">{reviewedCount}</span>
             </div>
             <div className="wallet-shell">
-              <WalletMultiButton className="wallet-button-reset" />
+              <Suspense fallback={<div className="wallet-button-reset">Loading wallet...</div>}>
+                <WalletConnectButton />
+              </Suspense>
             </div>
           </div>
         </header>
@@ -447,7 +455,8 @@ export default function App() {
 
             <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px]">
               <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
-                Curated live candidates stay first. Discovery supplements only fill empty review slots.
+                Default review flow is live-only. Curated candidates stay first, and discovery only
+                fills review slots when live evidence is strong enough.
               </div>
               <select
                 className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none"
@@ -657,7 +666,8 @@ export default function App() {
                   <CoverageRow label="Live history" state={selected.coverageSummary.history} />
                 </div>
                 <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
-                  Coverage不足时，分数仅用于初筛。Quote probes 会继续保留，但不会单独支撑强审阅结论。
+                  Scores help prioritize review, not replace missing evidence. Quote probes remain
+                  visible, but they do not support a strong approval decision on their own.
                 </div>
               </div>
             </div>
@@ -668,10 +678,13 @@ export default function App() {
                   <LineChart className="h-5 w-5" />
                   Live history
                 </h2>
-                {selected.historySource === "real-snapshots" && selected.historyPointCount >= 3 ? (
+                {selected.historyPointCount > 0 ? (
                   <>
                     <p className="mt-3 text-xs leading-5 text-slate-500">
                       Historical risk is recalculated from stored live snapshots.
+                      {selected.historyPointCount < 3
+                        ? " More points are still being collected before this becomes approval-grade history."
+                        : ""}
                     </p>
                     <Suspense
                       fallback={
@@ -686,8 +699,7 @@ export default function App() {
                 ) : (
                   <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
                     Collecting live history. This token currently has {selected.historyPointCount} real
-                    snapshot{selected.historyPointCount === 1 ? "" : "s"}, so the chart stays hidden until
-                    at least 3 points are available.
+                    snapshot{selected.historyPointCount === 1 ? "" : "s"}.
                   </div>
                 )}
               </div>
@@ -920,6 +932,7 @@ export default function App() {
                 Queue status
               </h2>
               <div className="mt-4 grid gap-3">
+                <Metric label="Queue mode" value={queueModeLabel} />
                 <Metric label="Queue label" value={readyFeed.queueLabel ?? "Review Queue"} />
                 <Metric label="Source type" value={readyFeed.sourceLabel} />
                 <Metric label="Current state" value={statusLabel(selected.reviewStatus)} />
@@ -969,8 +982,8 @@ export default function App() {
                   </span>
                 </button>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-                  Curated candidates keep the homepage stable. Discovery items still surface when they
-                  have enough live market coverage to support review.
+                  Curated candidates keep the homepage focused on real live evidence. Discovery items
+                  only surface when market and chain coverage are strong enough to support review.
                 </div>
               </div>
             </div>

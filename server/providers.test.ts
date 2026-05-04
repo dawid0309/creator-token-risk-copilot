@@ -158,6 +158,44 @@ describe("hybrid live token behavior", () => {
     expect(getApprovalBlockers(token)).toContain("Sample fallback is not approval evidence");
   });
 
+  it("marks sample fallback responses as explicit demo mode only", () => {
+    const token = makeToken({
+      isLive: false,
+      sourceTags: ["sample"],
+      sourceLabel: "Sample fallback dataset",
+      historySource: "sample-static",
+      approvalEligible: false,
+      approvalBlockers: ["Sample fallback is not approval evidence"],
+    });
+
+    expect(token.isLive).toBe(false);
+    expect(token.sourceTags).toContain("sample");
+    expect(token.approvalBlockers).toContain("Sample fallback is not approval evidence");
+  });
+
+  it("keeps low-quality live tokens visible for review while still blocking approval", () => {
+    const token = makeToken({
+      holders: 0,
+      topHolderPercent: 0,
+      confidenceLevel: "low",
+      coverageSummary: {
+        chain: "missing",
+        bags: "partial",
+        market: "partial",
+        history: "missing",
+        eligibleSignals: ["market", "launch"],
+        flags: ["holders-thin", "history-collecting"],
+      },
+      missingSignals: ["holders", "topHolderPercent", "fees"],
+      approvalEligible: false,
+      approvalBlockers: ["Needs verified holder coverage", "Needs real history"],
+    });
+
+    expect(token.marketLiquidityUsd).toBeGreaterThan(0);
+    expect(token.approvalEligible).toBe(false);
+    expect(token.approvalBlockers.length).toBeGreaterThan(0);
+  });
+
   it("allows approve only when verified market, chain, and history are all present", () => {
     const token = makeToken({
       holders: 2480,
@@ -203,6 +241,32 @@ describe("hybrid live token behavior", () => {
 
     expect(report.action).not.toBe("Needs More Data");
     expect(token.coverageSummary.market).toBe("verified");
+  });
+
+  it("keeps live review candidates visible even when approval is still blocked", () => {
+    const token = makeToken({
+      holders: 320,
+      topHolderPercent: 24,
+      confidenceLevel: "low",
+      coverageSummary: {
+        chain: "verified",
+        bags: "partial",
+        market: "verified",
+        history: "partial",
+        eligibleSignals: ["holders", "market", "launch"],
+        flags: ["history-collecting"],
+      },
+      missingSignals: ["fees"],
+      historySource: "collecting",
+      historyPointCount: 1,
+      approvalEligible: false,
+      approvalBlockers: ["Needs real history", "Confidence is still low"],
+    });
+
+    expect(token.isLive).toBe(true);
+    expect(token.marketLiquidityUsd).toBeGreaterThan(0);
+    expect(token.coverageSummary.chain).toBe("verified");
+    expect(token.approvalEligible).toBe(false);
   });
 
   it("keeps launch review packet-compatible tokens structurally valid", () => {

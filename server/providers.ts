@@ -1497,17 +1497,16 @@ function hasUsableMarketCoverage(token: Token) {
   return (
     token.marketPriceUsd > 0 ||
     token.marketLiquidityUsd > 0 ||
-    token.marketVolume24hUsd > 0
+    token.marketVolume24hUsd > 0 ||
+    token.quoteDepthUsd > 0 ||
+    token.quoteVolume24hUsd > 0
   );
 }
 
 function isReviewEligible(token: Token) {
   return (
     hasUsableMarketCoverage(token) &&
-    token.coverageSummary.chain !== "missing" &&
-    (token.coverageSummary.bags === "verified" || token.coverageSummary.market !== "missing") &&
-    token.confidenceLevel !== "low" &&
-    !(token.holders <= 0 && token.topHolderPercent <= 0)
+    token.coverageSummary.market !== "missing"
   );
 }
 
@@ -1619,8 +1618,8 @@ function buildFeedDescription(
 ) {
   if (fallbackUsed) {
     return mode === "review"
-      ? "Curated review candidates were unavailable, so the launch review console is using the local sample queue."
-      : "Live providers were unavailable, so the dashboard is using the local sample fallback dataset.";
+      ? "Live review candidates were unavailable, so explicit demo mode is serving the local sample queue."
+      : "Live providers were unavailable, so explicit demo mode is serving the local sample dataset.";
   }
 
   const solanaState = providerStatuses.find((item) => item.id === "solana")?.state;
@@ -1640,6 +1639,8 @@ function buildFeedDescription(
     if (sourceKind === "live-bags") {
       return "Review queue is running from Bags discovery candidates with market coverage while curated watchlist coverage is still warming up.";
     }
+
+    return "No eligible live review candidates are available right now. The review console is still online, but current live data is too thin for the default queue.";
   }
 
   if (sourceKind === "hybrid") {
@@ -1655,9 +1656,13 @@ function buildFeedDescription(
       : "Live Solana data is available for the creator-token watchlist, with real market statistics added when available.";
   }
 
-  return marketState === "connected"
-    ? "Live Bags discovery is available with real market statistics."
-    : "Live Bags discovery is available, but some real market statistics are still partial.";
+  if (sourceKind === "live-bags") {
+    return marketState === "connected"
+      ? "Live Bags discovery is available with real market statistics."
+      : "Live Bags discovery is available, but some real market statistics are still partial.";
+  }
+
+  return "No eligible live tokens are available for the current mode.";
 }
 
 async function applyHistoryAndCoverage(tokens: Token[]) {
@@ -1733,8 +1738,11 @@ export async function getTokenFeed(options: {
   query?: string;
   riskLevel?: RiskLevel;
   limit?: number;
+  demoMode?: "sample";
 }): Promise<TokenFeedResponse> {
   const mode = options.mode ?? "review";
+  const demoMode = options.demoMode;
+  const sampleDemoRequested = demoMode === "sample";
   const wantsWatchlist = mode === "watchlist" || mode === "hybrid" || mode === "review";
   const wantsDiscovery = mode === "discovery" || mode === "hybrid" || mode === "review";
   const requestedLimit = Math.max(1, options.limit ?? (mode === "review" ? 6 : 12));
@@ -1763,12 +1771,15 @@ export async function getTokenFeed(options: {
   const marketCoveredDiscovery = reviewedDiscovery.filter((item) => hasUsableMarketCoverage(item));
   const eligibleWatchlist = marketCoveredWatchlist.filter(isReviewEligible);
   const eligibleDiscovery = marketCoveredDiscovery.filter(isReviewEligible);
+  const visibleReviewWatchlist = marketCoveredWatchlist.filter((token) => token.isLive);
+  const visibleReviewDiscovery = marketCoveredDiscovery.filter((token) => token.isLive);
+  const liveReviewCandidates = sortReviewQueue([...visibleReviewWatchlist, ...visibleReviewDiscovery]);
   const hiddenWatchlistCount = watchlistResult.data.length - marketCoveredWatchlist.length;
   const hiddenDiscoveryCount = reviewedDiscovery.length - marketCoveredDiscovery.length;
   const hybridItems = mergeHybridTokens(eligibleWatchlist, eligibleDiscovery);
   const reviewQueue = buildReviewQueue(
-    eligibleWatchlist.filter((token) => token.isCurated),
-    eligibleDiscovery,
+    visibleReviewWatchlist.filter((token) => token.isCurated),
+    visibleReviewDiscovery,
     requestedLimit,
   );
 
@@ -1800,30 +1811,47 @@ export async function getTokenFeed(options: {
             : bagsResult.status.detail,
         )
       : bagsResult.status,
-    createProviderStatus("sample", "configured", "Local sample fallback is available."),
+    createProviderStatus(
+      "sample",
+      "configured",
+      sampleDemoRequested
+        ? "Local sample dataset is serving this response through explicit demo mode."
+        : "Local sample dataset is available only through explicit demo mode.",
+    ),
   ];
 
   let items: Token[] = [];
-  let sourceKind: FeedSourceKind = "static-sample";
+  let sourceKind: FeedSourceKind = "live-solana";
   let queueLabel: string | undefined;
 
   if (mode === "watchlist") {
     items = eligibleWatchlist;
-    sourceKind = items.length > 0 ? "live-solana" : "static-sample";
+    sourceKind = "live-solana";
   } else if (mode === "discovery") {
     items = eligibleDiscovery;
-    sourceKind = items.length > 0 ? "live-bags" : "static-sample";
+    sourceKind = "live-bags";
   } else if (mode === "review") {
-    items = reviewQueue.items;
-    queueLabel = reviewQueue.queueLabel;
-    sourceKind =
-      reviewQueue.discoverySupplementCount > 0 && reviewQueue.curatedVisibleCount > 0
-        ? "hybrid"
-        : reviewQueue.curatedVisibleCount > 0
-          ? "live-solana"
-          : reviewQueue.discoverySupplementCount > 0
-            ? "live-bags"
-            : "static-sample";
+    if (liveReviewCandidates.length > 0) {
+      items = liveReviewCandidates.slice(0, requestedLimit);
+      queueLabel = reviewQueue.queueLabel;
+      sourceKind =
+        eligibleDiscovery.length > 0 && eligibleWatchlist.length > 0
+          ? "hybrid"
+          : eligibleWatchlist.length > 0
+            ? "live-solana"
+            : "live-bags";
+    } else {
+      items = [];
+      queueLabel = reviewQueue.queueLabel;
+      sourceKind =
+        eligibleDiscovery.length > 0 && eligibleWatchlist.length > 0
+          ? "hybrid"
+          : eligibleWatchlist.length > 0
+            ? "live-solana"
+            : eligibleDiscovery.length > 0
+              ? "live-bags"
+              : "hybrid";
+    }
   } else {
     items = hybridItems;
     sourceKind =
@@ -1833,7 +1861,7 @@ export async function getTokenFeed(options: {
           ? "live-solana"
           : eligibleDiscovery.length > 0
             ? "live-bags"
-            : "static-sample";
+            : "hybrid";
   }
 
   let filtered = items
@@ -1844,12 +1872,12 @@ export async function getTokenFeed(options: {
   filtered = await applyHistoryAndCoverage(filtered);
   filtered = sortReviewQueue(filtered);
 
-  if (items.length === 0) {
+  if (items.length === 0 && sampleDemoRequested) {
     return createSampleFeed(
       mode,
       mode === "review"
-        ? "No curated or discovery-backed live review candidates were available, so the launch review console is using the sample queue."
-        : "No live tokens were available for this mode, so the dashboard is using the sample fallback dataset.",
+        ? "Live review candidates were unavailable, so explicit demo mode is serving the local sample queue."
+        : "Live tokens were unavailable for this mode, so explicit demo mode is serving the local sample dataset.",
       providerStatuses,
     );
   }
@@ -1863,13 +1891,15 @@ export async function getTokenFeed(options: {
           ? "Live Solana + market stats"
           : sourceKind === "live-bags"
             ? "Live Bags + market stats"
-            : "Sample fallback dataset",
+            : "Hybrid live signals",
     sourceKind,
     updatedAt: nowIso(),
-    isLive: sourceKind !== "static-sample",
+    isLive: true,
     description:
       filtered.length === 0
-        ? `Live providers are connected, but no tokens matched the current search or risk filter. ${buildFeedDescription(sourceKind, providerStatuses, false, mode)}`
+        ? options.query || options.riskLevel
+          ? `Live providers are connected, but no tokens matched the current search or risk filter. ${buildFeedDescription(sourceKind, providerStatuses, false, mode)}`
+          : buildFeedDescription(sourceKind, providerStatuses, false, mode)
         : buildFeedDescription(sourceKind, providerStatuses, false, mode),
     mode,
     queueLabel,

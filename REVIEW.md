@@ -32,6 +32,7 @@ It is now a live Bags API creator launch review MVP with:
 - This is still a local workflow, not a shared production review system.
 - Some live candidates can still have thin holder or market coverage.
 - Review signatures are verified locally on the server, but they are still stored as local workflow records rather than onchain actions.
+- The default queue is now correctly live-first, but that also means empty-state moments are possible when live evidence is too thin.
 - It is still stronger as a review tool than as a fully closed-loop Bags-native operational system.
 
 ## Scorecard

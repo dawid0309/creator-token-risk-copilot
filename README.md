@@ -85,16 +85,23 @@ Important variables:
 ```bash
 npm run test
 npm run build
+npm run demo:check
 ```
+
+`demo:check` is intended as a pre-recording and pre-judging sanity check. It verifies the local docs, workflow helpers, and the configured API base before you walk into a live demo.
 
 ## Demo Focus
 
-This round is optimized for a stable demo:
+This round is optimized for a transparent live-first demo:
 
 - Homepage defaults to `mode=review`
-- Curated live creator-token candidates come first
-- Discovery only supplements the queue
-- Sample fallback only appears when no live review items are usable
+- Default review flow is live-only
+- Discovery can supplement the queue when it has usable market coverage
+- Sample data is retained only as an explicit internal demo fallback
+
+## Demo Video
+
+- Demo video: `TODO - add published demo video URL before submission`
 
 ## Submission Assets
 
@@ -102,6 +109,8 @@ This round is optimized for a stable demo:
 - `DEMO_CHECKLIST.md`
 - `DEMO_STORYBOARD.md`
 - `REPO_READY.md`
+- `MANUAL_VERIFICATION.md`
+- `E2E_NOTES.md`
 
 ## Disclaimer
 

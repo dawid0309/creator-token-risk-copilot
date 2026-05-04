@@ -8,6 +8,7 @@
 - confirm the homepage lands on the review queue
 - confirm at least one live candidate is visible
 - confirm at least one candidate shows approval blockers or approval-ready state correctly
+- note the internal demo fallback URL in case live candidates are unavailable
 - unlock Phantom or Solflare
 
 ## During Demo
@@ -28,6 +29,7 @@
 ## Safety Checks
 
 - keep one fallback candidate available in case the top candidate changes
+- if live queue is empty, use the explicit API sample fallback and say it is internal demo mode only
 - avoid describing quote probes as full market stats
 - avoid calling the rule engine "AI reasoning"
 - mention that signatures are locally persisted, not written onchain

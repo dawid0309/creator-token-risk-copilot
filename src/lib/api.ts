@@ -2,6 +2,7 @@ import type {
   AppConfig,
   FeedMode,
   HealthResponse,
+  ReviewRejectResponse,
   ReviewDetailResponse,
   ReviewListResponse,
   ReviewSubmitPayload,
@@ -11,10 +12,13 @@ import type {
   TokenFeedResponse,
 } from "../types";
 
-const fallbackApiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4173";
+function getApiBase() {
+  if (import.meta.env.DEV) return "";
+  return import.meta.env.VITE_API_BASE_URL || "";
+}
 
 async function getJson<T>(path: string) {
-  const response = await fetch(`${fallbackApiBase}${path}`);
+  const response = await fetch(`${getApiBase()}${path}`);
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
@@ -59,7 +63,7 @@ export async function loadReview(mintAddress: string) {
 }
 
 export async function submitReview(mintAddress: string, payload: ReviewSubmitPayload) {
-  const response = await fetch(`${fallbackApiBase}/api/reviews/${mintAddress}`, {
+  const response = await fetch(`${getApiBase()}/api/reviews/${mintAddress}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -68,7 +72,7 @@ export async function submitReview(mintAddress: string, payload: ReviewSubmitPay
   });
 
   if (!response.ok) {
-    const data = (await response.json().catch(() => null)) as { message?: string } | null;
+    const data = (await response.json().catch(() => null)) as ReviewRejectResponse | null;
     throw new Error(data?.message || `Request failed: ${response.status}`);
   }
 

@@ -16,6 +16,7 @@ describe("token provider", () => {
       isLive: true,
       description: "ok",
       mode: "review",
+      demoMode: undefined,
       queueLabel: "Curated Review Queue",
       providerStatus: [],
       fallbackUsed: false,

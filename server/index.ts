@@ -5,6 +5,12 @@ import { env } from "./env.ts";
 import { getHealth, getTokenDetail, getTokenFeed } from "./providers.ts";
 import { analyzeToken } from "../src/lib/risk-engine.ts";
 import {
+  buildReviewSignatureMessage,
+  matchesReviewSignatureMessage,
+  normalizeReviewNotes,
+  normalizeSignedMessage,
+} from "../src/lib/review-signing.ts";
+import {
   getApprovalBlockers,
   getFollowUpAction,
   getFollowUpChecklist,
@@ -55,7 +61,7 @@ function validateReviewPayload(payload: ReviewSubmitPayload) {
     return "Decision must be Approve, Hold, or Escalate.";
   }
 
-  if (!payload.reviewNotes?.trim()) {
+  if (!normalizeReviewNotes(payload.reviewNotes || "")) {
     return "Review notes are required.";
   }
 
@@ -69,6 +75,10 @@ function validateReviewPayload(payload: ReviewSubmitPayload) {
 
   if (!payload.signedMessage?.trim()) {
     return "Signed message is required.";
+  }
+
+  if (!payload.signedAt?.trim()) {
+    return "Signed timestamp is required.";
   }
 
   return null;
@@ -190,6 +200,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
       const query = url.searchParams.get("query") ?? undefined;
       const riskLevel = (url.searchParams.get("riskLevel") as RiskLevel | null) ?? undefined;
       const limit = url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined;
+      const demoMode = url.searchParams.get("demo") === "sample" ? "sample" : undefined;
       json(
         response,
         200,
@@ -198,6 +209,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
           query,
           riskLevel,
           limit,
+          demoMode,
         }),
       );
       return;
@@ -247,10 +259,44 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         return;
       }
 
-      const signatureVerified = verifyWalletSignature({
-        walletAddress: payload.reviewedByWallet.trim(),
-        signedMessage: payload.signedMessage.trim(),
+      const normalizedPayload = {
+        decision: payload.decision,
+        reviewNotes: normalizeReviewNotes(payload.reviewNotes),
+        reviewedByWallet: payload.reviewedByWallet.trim(),
         walletSignature: payload.walletSignature.trim(),
+        signedMessage: normalizeSignedMessage(payload.signedMessage),
+        signedAt: payload.signedAt.trim(),
+      } satisfies ReviewSubmitPayload;
+
+      const expectedSignedMessage = buildReviewSignatureMessage({
+        mintAddress,
+        decision: normalizedPayload.decision,
+        reviewNotes: normalizedPayload.reviewNotes,
+        reviewedByWallet: normalizedPayload.reviewedByWallet,
+        timestamp: normalizedPayload.signedAt,
+      });
+
+      if (
+        !matchesReviewSignatureMessage({
+          mintAddress,
+          decision: normalizedPayload.decision,
+          reviewNotes: normalizedPayload.reviewNotes,
+          reviewedByWallet: normalizedPayload.reviewedByWallet,
+          timestamp: normalizedPayload.signedAt,
+          signedMessage: normalizedPayload.signedMessage,
+        })
+      ) {
+        json(response, 400, {
+          message: "Signed review payload does not match the submitted decision fields.",
+          expectedSignedMessage,
+        });
+        return;
+      }
+
+      const signatureVerified = verifyWalletSignature({
+        walletAddress: normalizedPayload.reviewedByWallet,
+        signedMessage: normalizedPayload.signedMessage,
+        walletSignature: normalizedPayload.walletSignature,
       });
       if (!signatureVerified) {
         json(response, 400, { message: "Wallet signature verification failed." });
@@ -272,10 +318,10 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         mintAddress,
         decision: payload.decision,
         summary: `${payload.decision} recorded for ${detail.token.name} using signed review evidence.`,
-        reviewNotes: payload.reviewNotes.trim(),
-        reviewedByWallet: payload.reviewedByWallet.trim(),
-        walletSignature: payload.walletSignature.trim(),
-        signedMessage: payload.signedMessage.trim(),
+        reviewNotes: normalizedPayload.reviewNotes,
+        reviewedByWallet: normalizedPayload.reviewedByWallet,
+        walletSignature: normalizedPayload.walletSignature,
+        signedMessage: normalizedPayload.signedMessage,
         signatureVerified: true,
         verifiedAt: new Date().toISOString(),
         reviewedAt: new Date().toISOString(),

@@ -9,6 +9,7 @@ export function createSampleFeed(mode: FeedMode, reason: string, providerStatus:
     updatedAt: new Date().toISOString(),
     isLive: false,
     mode,
+    demoMode: "sample",
     queueLabel: mode === "review" ? "Sample Review Queue" : undefined,
     fallbackUsed: true,
     description: reason,

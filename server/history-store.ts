@@ -97,7 +97,7 @@ export async function readTokenHistory(token: Token): Promise<{
 
   await ensureLoaded();
   const snapshots = (cache?.[token.mintAddress] ?? []).slice(-7);
-  if (snapshots.length < 3) {
+  if (snapshots.length === 0) {
     return {
       history: [],
       historySource: "collecting",
@@ -105,28 +105,30 @@ export async function readTokenHistory(token: Token): Promise<{
     };
   }
 
-  return {
-    history: snapshots.map((snapshot, index) => {
-      const report = analyzeToken({
-        ...token,
-        marketPriceUsd: snapshot.marketPriceUsd,
-        marketLiquidityUsd: snapshot.marketLiquidityUsd,
-        marketVolume24hUsd: snapshot.marketVolume24hUsd,
-        marketPriceChange24hPercent: snapshot.marketPriceChange24hPercent,
-        holders: snapshot.holders,
-        topHolderPercent: snapshot.topHolderPercent,
-        feeVelocityUsd: snapshot.feeVelocityUsd,
-        confidenceLevel: snapshot.confidenceLevel,
-      });
+  const history = snapshots.map((snapshot, index) => {
+    const report = analyzeToken({
+      ...token,
+      marketPriceUsd: snapshot.marketPriceUsd,
+      marketLiquidityUsd: snapshot.marketLiquidityUsd,
+      marketVolume24hUsd: snapshot.marketVolume24hUsd,
+      marketPriceChange24hPercent: snapshot.marketPriceChange24hPercent,
+      holders: snapshot.holders,
+      topHolderPercent: snapshot.topHolderPercent,
+      feeVelocityUsd: snapshot.feeVelocityUsd,
+      confidenceLevel: snapshot.confidenceLevel,
+    });
 
-      return {
-        day: index === snapshots.length - 1 ? "Now" : snapshot.timestamp.slice(5, 10),
-        risk: report.score,
-        volume: Math.round(snapshot.marketVolume24hUsd),
-        holders: snapshot.holders,
-      };
-    }),
-    historySource: "real-snapshots",
+    return {
+      day: index === snapshots.length - 1 ? "Now" : snapshot.timestamp.slice(5, 10),
+      risk: report.score,
+      volume: Math.round(snapshot.marketVolume24hUsd),
+      holders: snapshot.holders,
+    };
+  });
+
+  return {
+    history,
+    historySource: snapshots.length >= 3 ? "real-snapshots" : "collecting",
     historyPointCount: snapshots.length,
   };
 }

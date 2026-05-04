@@ -139,13 +139,13 @@ export type TokenFeed = {
   isLive: boolean;
   description: string;
   mode: FeedMode;
+  demoMode?: "sample";
   queueLabel?: string;
   providerStatus: ProviderStatus[];
-};
-
-export type TokenFeedResponse = TokenFeed & {
   fallbackUsed: boolean;
 };
+
+export type TokenFeedResponse = TokenFeed;
 
 export type AppConfig = {
   apiBaseUrl: string;
@@ -244,6 +244,7 @@ export type ReviewSubmitPayload = {
   reviewedByWallet: string;
   walletSignature: string;
   signedMessage: string;
+  signedAt: string;
 };
 
 export type ReviewListResponse = {
@@ -264,6 +265,7 @@ export type ReviewSubmitResponse = {
 export type ReviewRejectResponse = {
   message: string;
   approvalBlockers?: string[];
+  expectedSignedMessage?: string;
 };
 
 export type ReviewStoreStatus = {
